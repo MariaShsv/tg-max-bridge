@@ -1,0 +1,61 @@
+# docker-compose.yml — запуск бота и Redis вместе
+#
+# Docker Compose управляет несколькими контейнерами как единым целым.
+# Здесь два контейнера:
+#   1. bot  — наш Python-бот (мост TG ↔ MAX)
+#   2. redis — база данных Redis (хранит связки сообщений, очередь, маркеры)
+
+services:
+
+  # --- Контейнер с ботом ---
+  bot:
+    build: .
+    # ↑ Собрать образ из Dockerfile в текущей папке
+
+    container_name: tg-max-bridge
+    # ↑ Имя контейнера — чтобы легко находить в списке
+
+    restart: always
+    # ↑ ВАЖНО: если бот упадёт или сервер перезагрузится —
+    #   Docker автоматически поднимет контейнер заново
+
+    env_file:
+      - .env
+    # ↑ Подгружает переменные из файла .env
+    #   (токены, ID чатов и т.д.)
+
+    environment:
+      - REDIS_URL=redis://redis:6379
+    # ↑ Перезаписываем REDIS_URL из .env:
+    #   В Docker контейнеры общаются по имени сервиса (redis),
+    #   а не по localhost
+
+    depends_on:
+      - redis
+    # ↑ Сначала запустить Redis, потом бота
+
+  # --- Контейнер с Redis ---
+  redis:
+    image: redis:7-alpine
+    # ↑ Готовый образ Redis 7 (alpine — супер-лёгкая версия)
+
+    container_name: tg-max-redis
+
+    restart: always
+
+    volumes:
+      - redis_data:/data
+    # ↑ ВАЖНО: данные Redis сохраняются на диске сервера.
+    #   Без этого при перезапуске Redis потеряет все данные
+    #   (связки сообщений, маркер MAX, кэш топиков).
+
+    command: redis-server --save 60 1 --loglevel warning
+    # ↑ Настройки Redis:
+    #   --save 60 1   = сохранять на диск каждые 60 сек если есть изменения
+    #   --loglevel warning = не засорять логи мелочами
+
+# --- Том для данных Redis ---
+volumes:
+  redis_data:
+  # ↑ Docker создаст специальную папку на диске сервера
+  #   и будет хранить там данные Redis между перезапусками
