@@ -37,7 +37,7 @@ async def main():
     print("=" * 50)
 
     try:
-        await dp.start_polling(bot, skip_updates=False)
+        await dp.start_polling(bot, skip_updates=False, allowed_updates=["message", "edited_message"])
     finally:
         worker_task.cancel()
         max_poll_task.cancel()
