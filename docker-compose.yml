@@ -26,9 +26,12 @@ services:
 
     environment:
       - REDIS_URL=redis://redis:6379
-    # ↑ Перезаписываем REDIS_URL из .env:
-    #   В Docker контейнеры общаются по имени сервиса (redis),
-    #   а не по localhost
+      # ↑ Перезаписываем REDIS_URL из .env:
+      #   В Docker контейнеры общаются по имени сервиса (redis),
+      #   а не по localhost
+      - PYTHONUNBUFFERED=1
+      # ↑ Отключает буферизацию вывода Python —
+      #   логи сразу видны в docker logs, без задержки
 
     depends_on:
       - redis
