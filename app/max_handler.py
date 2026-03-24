@@ -13,6 +13,23 @@ from mapping import save_mapping, get_tg_id, is_processed, save_max_marker, get_
 _marker: int | None = None
 
 
+def get_all_images(attachments: list) -> list[dict]:
+    """Вернуть список всех изображений из вложений MAX.
+    Каждый элемент: {"url": "...", "file_size": 0}
+    """
+    images = []
+    for att in attachments:
+        if att.get("type") == "image":
+            payload = att.get("payload", {})
+            url = payload.get("url", "")
+            if url:
+                images.append({
+                    "url": url,
+                    "file_size": payload.get("file_size", 0),
+                })
+    return images
+
+
 async def notify_admin_large_file(sender_name: str, file_name: str,
                                   file_size: int, source: str) -> None:
     """Уведомить админа в личку о большом файле."""
@@ -163,7 +180,25 @@ async def handle_message_created(update: dict) -> None:
                 if quote:
                     formatted = quote + formatted
 
-    # Медиа: фото, файл или видео
+    # Альбом: несколько фото в одном сообщении MAX
+    all_images = get_all_images(attachments)
+    if len(all_images) > 1:
+        # Собираем все URL через запятую — передаём в очередь
+        urls = ",".join(img["url"] for img in all_images)
+        await enqueue_message(
+            chat_id=TG_GROUP_ID,
+            text=formatted,
+            reply_to=reply_to_tg_id,
+            message_thread_id=TG_TOPIC_ID,
+            max_msg_id=mid,
+            action="media_group",
+            media_url=urls,
+        )
+        name = sender.get("name", "?")
+        print(f"[MAX→TG] Альбом ({len(all_images)} фото) {name}: {text[:50]}")
+        return
+
+    # Одиночное медиа: фото, файл или видео
     if media_info and media_info["type"] in ("image", "file", "video"):
         file_size = media_info.get("file_size", 0)
         file_url = media_info.get("url", "")
@@ -178,7 +213,6 @@ async def handle_message_created(update: dict) -> None:
                 reply_to=reply_to_tg_id, message_thread_id=TG_TOPIC_ID,
                 max_msg_id=mid,
             )
-            # Уведомляем админа в личку
             sender_name = get_display_name_max(sender)
             await notify_admin_large_file(sender_name, file_name, file_size, "MAX")
         elif file_url:
