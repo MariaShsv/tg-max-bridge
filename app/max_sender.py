@@ -37,21 +37,16 @@ async def send_text(chat_id: int, text: str, reply_to: str = None) -> str | None
     """
     http = await get_client()
 
-    # Тело запроса — только текст и (опционально) ссылка на reply
     payload = {
         "text": text,
     }
 
-    # Если это ответ на конкретное сообщение — добавляем ссылку
     if reply_to:
         payload["link"] = {
             "type": "reply",
             "mid": reply_to,
         }
 
-    # Отправляем POST-запрос в MAX API
-    # Токен — в заголовке Authorization
-    # chat_id — в query-параметре URL
     try:
         resp = await http.post(
             f"{MAX_API_URL}/messages",
@@ -67,6 +62,63 @@ async def send_text(chat_id: int, text: str, reply_to: str = None) -> str | None
         return None
     except Exception as e:
         print(f"[MAX SEND ERROR] {e}")
+        return None
+
+
+async def send_album(chat_id: int, tokens: list[dict], caption: str,
+                     reply_to: str = None) -> str | None:
+    """Отправить альбом (несколько фото/файлов) в MAX одним сообщением.
+
+    Аргументы:
+        chat_id:  ID чата в MAX
+        tokens:   список токенов вида [{"type": "image", "token": "abc..."}, ...]
+                  type может быть "image" или "file"
+        caption:  подпись к альбому (атрибуция автора + текст)
+        reply_to: mid сообщения для ответа (опционально)
+
+    Возвращает:
+        mid отправленного сообщения (или None если ошибка)
+    """
+    http = await get_client()
+
+    # Формируем список вложений из токенов
+    # MAX API принимает: [{"type": "image", "payload": {"token": "..."}}, ...]
+    attachments = [
+        {
+            "type": t["type"],
+            "payload": {"token": t["token"]},
+        }
+        for t in tokens
+    ]
+
+    payload = {
+        "text": caption,
+        "attachments": attachments,
+    }
+
+    if reply_to:
+        payload["link"] = {
+            "type": "reply",
+            "mid": reply_to,
+        }
+
+    try:
+        resp = await http.post(
+            f"{MAX_API_URL}/messages",
+            params={"chat_id": chat_id},
+            headers={"Authorization": MAX_BOT_TOKEN},
+            json=payload,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        mid = data.get("message", {}).get("body", {}).get("mid")
+        print(f"[MAX ALBUM] Отправлено {len(tokens)} вложений, mid={mid}")
+        return mid
+    except httpx.HTTPStatusError as e:
+        print(f"[MAX ALBUM ERROR] HTTP {e.response.status_code}: {e.response.text}")
+        return None
+    except Exception as e:
+        print(f"[MAX ALBUM ERROR] {e}")
         return None
 
 
