@@ -114,16 +114,29 @@ async def _do_send(bot: Bot, task: dict) -> None:
 
 
 async def _do_edit(bot: Bot, task: dict) -> None:
-    """Отредактировать существующее сообщение в TG."""
+    """Отредактировать существующее сообщение в TG.
+    Пробуем edit_message_text, если не вышло — edit_message_caption (для фото).
+    """
     tg_msg_id = task.get("tg_msg_id")
     if not tg_msg_id:
         return
 
-    await bot.edit_message_text(
-        chat_id=task["chat_id"],
-        message_id=tg_msg_id,
-        text=task["text"],
-    )
+    try:
+        await bot.edit_message_text(
+            chat_id=task["chat_id"],
+            message_id=tg_msg_id,
+            text=task["text"],
+        )
+    except Exception:
+        try:
+            await bot.edit_message_caption(
+                chat_id=task["chat_id"],
+                message_id=tg_msg_id,
+                caption=task["text"],
+            )
+        except Exception as e:
+            print(f"[TG SENDER] Edit ошибка: {e}")
+            return
     print(f"[TG SENDER] Отредактировано msg_id={tg_msg_id}")
 
 
