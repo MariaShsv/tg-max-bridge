@@ -9,7 +9,7 @@ import io
 import json
 import redis.asyncio as redis
 from aiogram import Bot
-from aiogram.types import BufferedInputFile
+from aiogram.types import BufferedInputFile, InputMediaPhoto
 from aiogram.exceptions import TelegramRetryAfter
 from config import REDIS_URL, TG_SEND_INTERVAL
 from mapping import save_mapping
@@ -74,6 +74,8 @@ async def sender_worker(bot: Bot) -> None:
                 await _do_edit(bot, task)
             elif action == "media":
                 await _do_media(bot, task)
+            elif action == "media_group":
+                await _do_media_group(bot, task)
 
             await asyncio.sleep(TG_SEND_INTERVAL)
 
@@ -104,7 +106,6 @@ async def _do_send(bot: Bot, task: dict) -> None:
 
     sent = await bot.send_message(**kwargs)
 
-    # Сохраняем связку ID: TG ↔ MAX
     max_msg_id = task.get("max_msg_id")
     if max_msg_id:
         await save_mapping(sent.message_id, max_msg_id)
@@ -128,7 +129,6 @@ async def _do_edit(bot: Bot, task: dict) -> None:
 
 async def _do_media(bot: Bot, task: dict) -> None:
     """Скачать файл из MAX и отправить в TG как фото/документ."""
-    import httpx
     from media import download_max_file
 
     media_url = task.get("media_url", "")
@@ -136,27 +136,22 @@ async def _do_media(bot: Bot, task: dict) -> None:
     caption = task.get("text", "")
 
     if not media_url:
-        # Нет URL — фолбэк на текст
         await _do_send(bot, task)
         return
 
-    # Скачиваем файл из MAX
     result = await download_max_file(media_url, task.get("media_name"))
     if not result:
-        # Не удалось скачать — фолбэк на текст
         await _do_send(bot, task)
         return
 
     file_data, file_name = result
 
-    # Общие параметры
     kwargs = {"chat_id": task["chat_id"], "caption": caption}
     if task.get("reply_to"):
         kwargs["reply_to_message_id"] = task["reply_to"]
     if task.get("thread_id"):
         kwargs["message_thread_id"] = task["thread_id"]
 
-    # Отправляем как фото или документ
     input_file = BufferedInputFile(file_data, filename=file_name)
 
     if media_type == "photo":
@@ -164,11 +159,88 @@ async def _do_media(bot: Bot, task: dict) -> None:
     else:
         sent = await bot.send_document(**kwargs, document=input_file)
 
-    del file_data  # освобождаем память
+    del file_data
 
-    # Сохраняем mapping
     max_msg_id = task.get("max_msg_id")
     if max_msg_id:
         await save_mapping(sent.message_id, max_msg_id)
 
     print(f"[TG SENDER] Медиа отправлено msg_id={sent.message_id}")
+
+
+async def _do_media_group(bot: Bot, task: dict) -> None:
+    """Скачать несколько фото из MAX и отправить в TG как альбом.
+
+    media_url содержит несколько URL через запятую:
+    "https://url1,https://url2,https://url3"
+    """
+    from media import download_max_file
+
+    urls_raw = task.get("media_url", "")
+    caption = task.get("text", "")
+
+    if not urls_raw:
+        await _do_send(bot, task)
+        return
+
+    urls = urls_raw.split(",")
+
+    # Скачиваем все фото
+    media_group = []
+    all_data = []
+
+    for i, url in enumerate(urls):
+        url = url.strip()
+        if not url:
+            continue
+
+        result = await download_max_file(url)
+        if not result:
+            print(f"[TG SENDER] Альбом: не удалось скачать фото {i+1}, пропускаем")
+            continue
+
+        file_data, file_name = result
+        all_data.append(file_data)
+
+        input_file = BufferedInputFile(file_data, filename=file_name)
+
+        # Подпись только к первому фото
+        if i == 0:
+            media_group.append(InputMediaPhoto(media=input_file, caption=caption))
+        else:
+            media_group.append(InputMediaPhoto(media=input_file))
+
+    if not media_group:
+        # Не удалось скачать ни одного — отправляем текст
+        await _do_send(bot, task)
+        return
+
+    if len(media_group) == 1:
+        # Одно фото — отправляем обычно
+        kwargs = {"chat_id": task["chat_id"], "caption": caption}
+        if task.get("reply_to"):
+            kwargs["reply_to_message_id"] = task["reply_to"]
+        if task.get("thread_id"):
+            kwargs["message_thread_id"] = task["thread_id"]
+        sent = await bot.send_photo(**kwargs, photo=media_group[0].media)
+        tg_id = sent.message_id
+    else:
+        # Несколько фото — отправляем альбомом
+        kwargs = {"chat_id": task["chat_id"], "media": media_group}
+        if task.get("reply_to"):
+            kwargs["reply_to_message_id"] = task["reply_to"]
+        if task.get("thread_id"):
+            kwargs["message_thread_id"] = task["thread_id"]
+
+        sent_messages = await bot.send_media_group(**kwargs)
+        tg_id = sent_messages[0].message_id
+
+    # Освобождаем память
+    for data in all_data:
+        del data
+
+    max_msg_id = task.get("max_msg_id")
+    if max_msg_id:
+        await save_mapping(tg_id, max_msg_id)
+
+    print(f"[TG SENDER] Альбом ({len(media_group)} фото) отправлен msg_id={tg_id}")
