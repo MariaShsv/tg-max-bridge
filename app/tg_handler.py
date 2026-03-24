@@ -354,7 +354,8 @@ async def handle_tg_edit(message: types.Message) -> None:
     if message.from_user and message.from_user.is_bot:
         return
 
-    if not message.text:
+    text = message.text or message.caption or ""
+    if not text:
         return
 
     max_mid = await get_max_id(message.message_id)
@@ -366,10 +367,10 @@ async def handle_tg_edit(message: types.Message) -> None:
     if message.message_thread_id and not topic_name:
         topic_name = f"#{message.message_thread_id}"
 
-    formatted = format_tg_to_max(message.from_user, message.text, topic_name)
+    formatted = format_tg_to_max(message.from_user, text, topic_name)
 
     success = await max_edit_text(max_mid, formatted)
     if success:
-        print(f"[TG→MAX] Edit: {message.from_user.first_name}: {message.text[:50]}")
+        print(f"[TG→MAX] Edit: {message.from_user.first_name}: {text[:50]}")
     else:
         print(f"[TG→MAX] Edit: ОШИБКА редактирования в MAX")
